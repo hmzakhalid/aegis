@@ -41,5 +41,5 @@ yarn-error.log*
 # intellij
 .idea
 starter-kit.iml
-
+.direnv/
 docker/data
