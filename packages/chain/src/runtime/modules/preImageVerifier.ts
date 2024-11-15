@@ -4,49 +4,49 @@ import {
     runtimeModule,
     state,
   } from "@proto-kit/module";
-  import { State, assert } from "@proto-kit/protocol";
-  import { PublicKey, Field } from "o1js";
-  import { PreimageProof } from "./preimageZkProgram";
+  import { State, StateMap, assert } from "@proto-kit/protocol";
+  import { Field, Bool } from "o1js";
+  import { JoinSplitTransactionProof } from "./preimageZkProgram";
   
   @runtimeModule()
-  export class PreimageVerifier extends RuntimeModule<Record<string, never>> {
-    // State to store the expected public key
-    @state() public expectedPublicKey = State.from<PublicKey>(PublicKey);
+  export class ShieldedPool extends RuntimeModule<Record<string, never>> {
+    // State to store the current Merkle root
+    @state() public root = State.from<Field>(Field);
   
-    // State to store the expected commitment
-    @state() public expectedCommitment = State.from<Field>(Field);
+    // StateMap to track nullifiers (to prevent double-spends)
+    @state() public nullifiers = StateMap.from<Field, Bool>(Field, Bool);
   
-    // Set the expected public key and commitment
+    // Set the Merkle root (typically called when initializing or updating the pool)
     @runtimeMethod()
-    public async setExpectedValues(publicKey: PublicKey, commitment: Field) {
-      await this.expectedPublicKey.set(publicKey);
-      await this.expectedCommitment.set(commitment);
+    public async setRoot(root: Field) {
+      await this.root.set(root);
     }
   
-    // Verify the proof that private key is the preimage of the public key and matches the commitment
+    // Process a transaction proof
     @runtimeMethod()
-    public async verifyProof(proof: PreimageProof) {
+    public async processTransaction(proof: JoinSplitTransactionProof) {
       // Verify the zk-SNARK proof
       proof.verify();
   
-      // Retrieve the public key and commitment from the proof
-      const proofPublicKey = proof.publicOutput.publicKey;
-      const proofCommitment = proof.publicOutput.commitment;
+      // Retrieve public outputs from the proof
+      const { nullifiers, root: proofRoot } = proof.publicOutput;
   
-      // Retrieve the expected public key and commitment from the contract state
-      const expectedPublicKey = await this.expectedPublicKey.get();
-      const expectedCommitment = await this.expectedCommitment.get();
-  
-      // Assert that the public key and commitment from the proof match the expected values
+      // Check that the proof's Merkle root matches the stored root
+      const currentRoot = await this.root.get();
       assert(
-        proofPublicKey.equals(expectedPublicKey.value),
-        "Proof does not match the expected public key"
+        proofRoot.equals(currentRoot.value),
+        "Proof root does not match the current Merkle root"
       );
   
-      assert(
-        proofCommitment.equals(expectedCommitment.value),
-        "Proof does not match the expected commitment"
-      );
+      // Ensure all nullifiers are unused and mark them as used
+      for (const nullifier of nullifiers) {
+        const isNullifierUsed = await this.nullifiers.get(nullifier);
+        assert(isNullifierUsed.value.not(), "Nullifier has already been used");
+        await this.nullifiers.set(nullifier, Bool(true));
+      }
+  
+      // Optionally update the Merkle root (if outputs are added to the tree)
+      await this.root.set(proofRoot);
     }
   }
   

@@ -1,54 +1,70 @@
 import { TestingAppChain } from "@proto-kit/sdk";
-import { PreimageVerifier } from "../../../src/runtime/modules/preImageVerifier";
-import { PreimageZkProgram } from "../../../src/runtime/modules/preimageZkProgram";
-import { log } from "@proto-kit/common";
-import { PrivateKey, Field, Poseidon } from "o1js";
+import { ShieldedPool } from "../../../src/runtime/modules/preImageVerifier";
+import { JoinSplitTransactionProof, JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/preimageZkProgram";
+import { PrivateKey, Field, MerkleMap, Poseidon } from "o1js";
 import { UInt64 } from "@proto-kit/library";
 
-log.setLevel("ERROR");
+describe("ShieldedPool Transactions", () => {
+  it("should process valid transactions and reject duplicate nullifiers", async () => {
+    await JoinSplitTransactionZkProgram.compile();
 
-describe("PreimageVerifier with Commitments", () => {
-  it("should verify the correct proof with commitment and reject invalid proofs", async () => {
-    // Initialize the testing app chain with the PreimageVerifier module 
-    const appChain = TestingAppChain.fromRuntime({
-      PreimageVerifier,
-    });
-    appChain.configurePartial({
-      Runtime: {
-        PreimageVerifier: {},
-        Balances: {
-          totalSupply: UInt64.from(10000),
-        },
-      },
-    });
-
+    // Initialize the testing app chain with the ShieldedPool module
+    const appChain = TestingAppChain.fromRuntime({ ShieldedPool });
+    appChain.configurePartial({ Runtime: { Balances: { totalSupply: UInt64.from(10000) }, ShieldedPool: {} } });
     const alicePrivateKey = PrivateKey.random();
     const alice = alicePrivateKey.toPublicKey();
 
     await appChain.start();
     appChain.setSigner(alicePrivateKey);
+    const shieldedPool = appChain.runtime.resolve("ShieldedPool");
 
-    // Compile the zk program
-    await PreimageZkProgram.compile();
+    // Set initial Merkle root
+    const initialMerkleMap = new MerkleMap();
+    const initialRoot = initialMerkleMap.getRoot();
 
-    // Example private key, amount, and blinding
-    const privateKey = PrivateKey.random();
-    const amount = Field(1000);
-    const blinding = Field(12345);
+    const tx0 = await appChain.transaction(alice, async () => {
+        await shieldedPool.setRoot(initialRoot);
+      });
+  
+    await tx0.sign();
+    await tx0.send();
 
-    // Compute the expected public key and commitment
-    const expectedPublicKey = privateKey.toPublicKey();
-    const expectedCommitment = Poseidon.hash([amount, blinding, expectedPublicKey.toFields()[0]]);
+    // Define inputs and outputs for the transaction
+    const privateKeys = [PrivateKey.random(), PrivateKey.random()];
+    const inputAmounts = [Field(1000), Field(2000)];
+    const inputBlindings = [Field(123), Field(456)];
+    const outputAmounts = [Field(1500), Field(1500)];
+    const outputPubkeys = [Field(789), Field(101112)];
+    const outputBlindings = [Field(333), Field(444)];
+    const publicAmount = Field(0);
 
-    // Generate a valid proof for the private key, amount, and blinding
-    const proof = await PreimageZkProgram.provePreimage(privateKey, amount, blinding);
+    // Add commitments to the Merkle Map (mock Merkle proof generation)
+    const witnesses = privateKeys.map((_, i) => {
+      const publicKey = privateKeys[i].toPublicKey().toFields()[0];
+      const commitment = Poseidon.hash([inputAmounts[i], inputBlindings[i], publicKey]);
+      initialMerkleMap.set(Field(i), commitment); // Add commitment at index i
+      return initialMerkleMap.getWitness(Field(i)); // Generate Merkle proof
+    });
 
-    // Initialize PreimageVerifier module
-    const preimageVerifier = appChain.runtime.resolve("PreimageVerifier");
+    // Prepare transaction inputs
+    const transactionInput = {
+      privateKeys,
+      inputAmounts,
+      blindings: inputBlindings,
+      merkleProofInputs: witnesses,
+      merkleProofIndex: [Field(0), Field(1)], // Indices of commitments in the Merkle Map
+      outputAmounts,
+      outputPublicKeys: outputPubkeys,
+      outputBlindings,
+      publicAmount,
+    };
 
-    // Create a transaction to set the expected public key and commitment
+    // Generate a valid proof
+    const proof = await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
+
+    // Process the transaction
     const tx1 = await appChain.transaction(alice, async () => {
-      await preimageVerifier.setExpectedValues(expectedPublicKey, expectedCommitment);
+      await shieldedPool.processTransaction(proof);
     });
 
     await tx1.sign();
@@ -58,35 +74,16 @@ describe("PreimageVerifier with Commitments", () => {
     const block1 = await appChain.produceBlock();
     expect(block1?.transactions[0].status.toBoolean()).toBe(true);
 
-    // Create a transaction to verify the valid proof
+    // Attempt to reuse the same nullifiers (should fail)
     const tx2 = await appChain.transaction(alice, async () => {
-      await preimageVerifier.verifyProof(proof);
+      await shieldedPool.processTransaction(proof);
     });
 
     await tx2.sign();
     await tx2.send();
 
-    // Verify the transaction was successful
+    // Verify the transaction failed due to duplicate nullifiers
     const block2 = await appChain.produceBlock();
-    expect(block2?.transactions[0].status.toBoolean()).toBe(true);
-
-    // Test with an invalid proof (random private key and commitment)
-    const randomPrivateKey = PrivateKey.random();
-    const invalidProof = await PreimageZkProgram.provePreimage(
-      randomPrivateKey,
-      Field(2000),
-      Field(54321)
-    );
-
-    const tx3 = await appChain.transaction(alice, async () => {
-      await preimageVerifier.verifyProof(invalidProof);
-    });
-
-    await tx3.sign();
-    await tx3.send();
-
-    // Verify the transaction failed
-    const block3 = await appChain.produceBlock();
-    expect(block3?.transactions[0].status.toBoolean()).toBe(false);
-  }, 1_000_000); // Set a high timeout for async operations
+    expect(block2?.transactions[0].status.toBoolean()).toBe(false);
+  }, 1_000_000);
 });
