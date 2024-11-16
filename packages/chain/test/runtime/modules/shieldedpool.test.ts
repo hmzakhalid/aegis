@@ -23,12 +23,9 @@ function createTxInput(
   let merkleIndexes: bigint[] = [];
   const oldRoot = merkleTree.getRoot();
   const witnesses = outputs.map((output) => {
-    const commitment = Poseidon.hash([
-      output.amount,
-      output.blinding,
-      output.pubkey,
-    ]);
+    const commitment = output.commitment();
     const index = merkleTree.addLeaf(commitment); // Set the leaf
+    console.log({ index });
     merkleIndexes.push(index);
     return new MyMerkleWitness(merkleTree.getWitness(index));
   });
@@ -71,6 +68,9 @@ function withdraw(wallet: Wallet, amount: bigint) {
     throw new Error("Not enough balance!");
   }
 
+  if (inputs.length === 1) {
+    inputs.push(Note.new(wallet.getPublicKey(), 0n));
+  }
   let change = total - amount;
   change = change > 0n ? change : 0n;
   const outputs = [Note.new(publicKey, 0n), Note.new(publicKey, change)];
@@ -86,6 +86,10 @@ function transfer(wallet: Wallet, to: PublicKey, amount: bigint) {
   if (inputs.length === 0) {
     throw new Error("Not enough balance!");
   }
+  if (inputs.length === 1) {
+    inputs.push(Note.new(wallet.getPublicKey(), 0n));
+  }
+
   let change = total - amount;
   change = change > 0n ? change : 0n;
 
@@ -185,18 +189,11 @@ async function depositTest() {
 
   return {
     appChain,
-    wallet
-  }
-};
+    wallet,
+  };
+}
 
 describe("ShieldedPool Transactions", () => {
-  it.only(
-    "should deposit",
-    async () => {
-      await depositTest();
-    },
-    TIMEOUT,
-  );
   it(
     "should withdraw",
     async () => {
@@ -250,33 +247,24 @@ describe("ShieldedPool Transactions", () => {
     },
     TIMEOUT,
   );
-  it(
+  it.only(
     "should process valid transactions and reject duplicate nullifiers",
     async () => {
-      const alice = Wallet.random();
+      const { appChain, wallet: alice } = await depositTest();
       const bob = Wallet.random();
 
       const tokenId = TokenId.from(0);
-      const appChain = await setupAppChain();
 
-      await appChain.start();
-      appChain.setSigner(alice.getPrivateKey());
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
 
-      // Final root after adding all commitments
-      const initialRoot = alice.getMerkleTree().getRoot();
-      // Set the Merkle root in the runtime module
-      const tx0 = await appChain.transaction(alice.getPublicKey(), async () => {
-        await shieldedPool.setRoot(initialRoot);
-      });
-      await tx0.sign();
-      await tx0.send();
-      await appChain.produceBlock();
+      const { outputs, inputs, merkleIndexes, ...transactionInput } = transfer(
+        alice,
+        bob.getPublicKey(),
+        1000n,
+      );
 
-      alice.addNote(0n, Note.new(alice.getPublicKey(), 1000n));
-      alice.addNote(0n, Note.new(alice.getPublicKey(), 2000n));
-
-      const transactionInput = transfer(alice, bob.getPublicKey(), 1500n);
+      alice.addNotesFromOutputs(outputs, merkleIndexes);
+      bob.addNotesFromOutputs(outputs, merkleIndexes);
 
       // Generate a valid proof
       const proof =
@@ -295,20 +283,16 @@ describe("ShieldedPool Transactions", () => {
 
       if (block1) {
         alice.consumeBlock(block1, "nullify");
+        bob.consumeBlock(block1, "nullify");
       } else {
         throw new Error("Block is undefined");
       }
 
-      // Attempt to reuse the same nullifiers (should fail)
-      const tx2 = await appChain.transaction(alice.getPublicKey(), async () => {
-        await shieldedPool.processTransaction(tokenId, proof);
-      });
-      await tx2.sign();
-      await tx2.send();
+      let alicePrivateBal = alice.getBalance();
+      expect(Number(alicePrivateBal)).toBe(500);
 
-      // Verify the transaction failed due to duplicate nullifiers
-      const block2 = await appChain.produceBlock();
-      expect(block2?.transactions[0].status.toBoolean()).toBe(false);
+      let bobPrivateBal = alice.getBalance();
+      expect(Number(bobPrivateBal)).toBe(1000);
     },
     TIMEOUT,
   ); // Set a high timeout

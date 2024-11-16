@@ -120,7 +120,6 @@ export class Wallet {
 
   getBalance() {
     let unspent = this.getUnspentNotes();
-    console.dir({ unspent }, { depth: null });
     let total = unspent.reduce((acc, note) => {
       acc += note.amount.toBigInt();
       return acc;
@@ -141,7 +140,10 @@ export class Wallet {
 
   addNotesFromOutputs(outputs: Note[], merkleIndexes: bigint[]) {
     for (let i = 0; i < outputs.length; i++) {
-      this.addNote(merkleIndexes[i], outputs[i]);
+      let note = outputs[i];
+      if (note.pubkey.equals(this.getPublicKey().toFields()[0])) {
+        this.addNote(merkleIndexes[i], outputs[i]);
+      }
     }
   }
 
