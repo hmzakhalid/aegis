@@ -98,6 +98,7 @@ describe("ShieldedPool Transactions", () => {
     await tx0.sign();
     await tx0.send();
 
+    await appChain.produceBlock();
 
     const inputs = [
       {
@@ -125,7 +126,6 @@ describe("ShieldedPool Transactions", () => {
       },
     ];
 
-
     const transactionInput = createTxInput(
       alicePrivateKey,
       merkleTree,
@@ -134,11 +134,11 @@ describe("ShieldedPool Transactions", () => {
       Field(0),
     );
 
-    console.dir(transactionInput.nullifiers, { depth: null })
-
     // Generate a valid proof
     const proof =
       await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
+
+    const currentRoot = await appChain.query.runtime.ShieldedPool.root.get();
 
     // Process the transaction
     const tx1 = await appChain.transaction(alice, async () => {
@@ -150,10 +150,8 @@ describe("ShieldedPool Transactions", () => {
     // Verify the transaction was successful
     const block1 = await appChain.produceBlock();
     expect(block1?.transactions[0].status.toBoolean()).toBe(true);
-    
-    console.log("OldRoot", transactionInput.oldRoot)
+
     const newRoot = await appChain.query.runtime.ShieldedPool.root.get()
-    console.log("newRoot", newRoot)
 
     // Attempt to reuse the same nullifiers (should fail)
     const tx2 = await appChain.transaction(alice, async () => {
@@ -165,5 +163,6 @@ describe("ShieldedPool Transactions", () => {
     // Verify the transaction failed due to duplicate nullifiers
     const block2 = await appChain.produceBlock();
     expect(block2?.transactions[0].status.toBoolean()).toBe(false);
+
   }, 1_000_000); // Set a high timeout
 });

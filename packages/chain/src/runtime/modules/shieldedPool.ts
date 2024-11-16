@@ -11,7 +11,7 @@ import { JoinSplitTransactionProof } from "./jointTxZkProgram";
 @runtimeModule()
 export class ShieldedPool extends RuntimeModule<Record<string, never>> {
   @state() public root = State.from<Field>(Field);
-  @state() public nullifiers = StateMap.from<Field, Bool>(Field, Bool); 
+  @state() public nullifiers = StateMap.from<Field, Bool>(Field, Bool);
 
   @runtimeMethod()
   public async setRoot(root: Field) {
@@ -21,9 +21,8 @@ export class ShieldedPool extends RuntimeModule<Record<string, never>> {
   @runtimeMethod()
   public async processTransaction(proof: JoinSplitTransactionProof) {
     proof.verify();
-
     const { nullifiers, oldRoot: proofRoot, newRoot } = proof.publicOutput;
-    const currentRoot = (await this.root.get()).value;
+    const currentRoot = (await this.root.get()).value
     assert(
       proofRoot.equals(currentRoot),
       "Proof Root does not match the new Root"
@@ -35,17 +34,7 @@ export class ShieldedPool extends RuntimeModule<Record<string, never>> {
       await this.nullifiers.set(nullifier, Bool(true));
     }
 
-    Provable.asProver(() => {
-      console.log("New Root", newRoot.toString())
-      console.log("Proof Root", proofRoot.toString())
-      console.log("Current Root", currentRoot.toString())
-      console.log("Nullifiers", nullifiers.map(n => n.toString()))
-    })
     await this.root.set(newRoot);
 
-    this.events?.emit("transactionProcessed", {
-      newRoot: newRoot.toString(),
-      nullifiers: nullifiers.map(n => n.toString()),
-    })
   }
 }
