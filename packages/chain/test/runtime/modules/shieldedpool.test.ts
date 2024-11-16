@@ -5,13 +5,7 @@ import { IndexedMerkleTree } from "../../../src/runtime/modules/utils";
 import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/jointTxZkProgram";
 import { Balances } from "../../../src/runtime/modules/balances";
 import { Note, Wallet } from "../../../src/runtime/modules/types";
-import {
-  PrivateKey,
-  PublicKey,
-  Field,
-  MerkleWitness,
-  Poseidon,
-} from "o1js";
+import { PrivateKey, PublicKey, Field, MerkleWitness, Poseidon } from "o1js";
 import { Balance, BalancesKey, TokenId, UInt64 } from "@proto-kit/library";
 
 const TIMEOUT = 1_000_000;
@@ -121,76 +115,85 @@ async function setupAppChain() {
   return appChain;
 }
 
+async function depositTest() {
+  const alicePrivateKey = PrivateKey.random();
+  const alice = alicePrivateKey.toPublicKey();
+  const tokenId = TokenId.from(0);
+  const appChain = await setupAppChain();
+  appChain.setSigner(alicePrivateKey);
+
+  const shieldedPool = appChain.runtime.resolve("ShieldedPool");
+  const balances = appChain.runtime.resolve("Balances");
+  const wallet = new Wallet(alicePrivateKey);
+
+  // Final root after adding all commitments
+  const initialRoot = wallet.getMerkleTree().getRoot();
+
+  // Set the Merkle root in the runtime module
+  const tx0 = await appChain.transaction(alice, async () => {
+    await shieldedPool.setRoot(initialRoot);
+  });
+  await tx0.sign();
+  await tx0.send();
+  await appChain.produceBlock();
+
+  let tx = await appChain.transaction(alice, async () => {
+    await balances.addBalance(tokenId, alice, Balance.from(100_000n));
+  });
+  await tx.sign();
+  await tx.send();
+  await appChain.produceBlock();
+
+  let balance = await appChain.query.runtime.Balances.balances.get(
+    BalancesKey.from(tokenId, alice),
+  );
+
+  if (!balance) {
+    throw new Error("No balance found for alice!!!");
+  }
+
+  const { outputs, inputs, merkleIndexes, ...transactionInput } = deposit(
+    wallet,
+    1500n,
+  );
+
+  wallet.addNotesFromOutputs(outputs, merkleIndexes);
+
+  // Generate a valid proof
+  const proof =
+    await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
+
+  // Process the transaction
+  const tx1 = await appChain.transaction(alice, async () => {
+    await shieldedPool.processTransaction(tokenId, proof);
+  });
+  await tx1.sign();
+  await tx1.send();
+
+  // Verify the transaction was successful
+  const block1 = await appChain.produceBlock();
+  expect(block1?.transactions[0].status.toBoolean()).toBe(true);
+  // Consume the block and add nullifier to the wallet
+  if (block1) {
+    wallet.consumeBlock(block1, "nullify");
+  } else {
+    throw new Error("Block is undefined");
+  }
+
+  let total = wallet.getBalance();
+  expect(Number(total)).toBe(1500);
+
+  return {
+    appChain,
+    wallet
+  }
+};
+
 describe("ShieldedPool Transactions", () => {
   it.only(
     "should deposit",
     async () => {
-      const alicePrivateKey = PrivateKey.random();
-      const alice = alicePrivateKey.toPublicKey();
-      const tokenId = TokenId.from(0);
-      const appChain = await setupAppChain();
-      appChain.setSigner(alicePrivateKey);
-
-      const shieldedPool = appChain.runtime.resolve("ShieldedPool");
-      const balances = appChain.runtime.resolve("Balances");
-      const wallet = new Wallet(alicePrivateKey);
-
-      // Final root after adding all commitments
-      const initialRoot = wallet.getMerkleTree().getRoot();
-
-      // Set the Merkle root in the runtime module
-      const tx0 = await appChain.transaction(alice, async () => {
-        await shieldedPool.setRoot(initialRoot);
-      });
-      await tx0.sign();
-      await tx0.send();
-      await appChain.produceBlock();
-
-      let tx = await appChain.transaction(alice, async () => {
-        await balances.addBalance(tokenId, alice, Balance.from(100_000n));
-      });
-      await tx.sign();
-      await tx.send();
-      await appChain.produceBlock();
-
-      let balance = await appChain.query.runtime.Balances.balances.get(
-        BalancesKey.from(tokenId, alice),
-      );
-
-      if (!balance) {
-        throw new Error("No balance found for alice!!!");
-      }
-
-      const { outputs, inputs, merkleIndexes, ...transactionInput } = deposit(
-        wallet,
-        1500n,
-      );
-
-      wallet.addNotesFromOutputs(outputs, merkleIndexes);
-
-      // Generate a valid proof
-      const proof =
-        await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
-
-      // Process the transaction
-      const tx1 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(tokenId, proof);
-      });
-      await tx1.sign();
-      await tx1.send();
-
-      // Verify the transaction was successful
-      const block1 = await appChain.produceBlock();
-      expect(block1?.transactions[0].status.toBoolean()).toBe(true);
-      // Consume the block and add nullifier to the wallet
-      if (block1) {
-        wallet.consumeBlock(block1, "nullify");
-      } else {
-        throw new Error("Block is undefined");
-      }
-
-      let total = wallet.getBalance();
-      expect(Number(total)).toBe(1500);
+      await depositTest();
     },
     TIMEOUT,
   );
