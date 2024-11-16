@@ -1,5 +1,6 @@
 import { Field, Poseidon, PrivateKey, PublicKey } from "o1js";
 import { IndexedMerkleTree } from "./utils";
+import { Block } from "@proto-kit/sequencer";
 
 const randomInt = () => BigInt(Math.floor(Math.random() * 1000));
 const pubkeyToField = (pk: PublicKey) => pk.toFields()[0];
@@ -87,6 +88,19 @@ export class NoteStore {
     return [notes, total];
   }
 
+  consumeBlock(block: Block, eventName: string) {
+    const events = block?.transactions?.flatMap((tx) => tx.events) || [];
+    const matchingEvents = events.filter((event) => event.eventName === eventName);
+    for (const event of matchingEvents) {
+      const nullifierField = event.data[0];
+      if (nullifierField instanceof Field) {
+        this.nullifiers.push(nullifierField);
+      } else {
+        console.warn("Unexpected nullifier format:", event.data);
+      }
+    }
+  }
+
   getPrivateKey() {
     return this.privateKey;
   }
@@ -99,6 +113,10 @@ export class NoteStore {
     const nwm =
       note instanceof Note ? note.metaNote(this.privateKey, index) : note;
     this.notes.push(nwm);
+  }
+
+  addNullifer(nullifier: Field) {
+    this.nullifiers.push(nullifier);
   }
 
   getMerkleTree() {

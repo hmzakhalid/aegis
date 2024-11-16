@@ -122,7 +122,7 @@ describe("ShieldedPool Transactions", () => {
 
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
       const store = new NoteStore(alicePrivateKey);
-      
+
       // Final root after adding all commitments
       const initialRoot = store.getMerkleTree().getRoot();
 
@@ -150,6 +150,12 @@ describe("ShieldedPool Transactions", () => {
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
+      // Consume the block and add nullifier to the store
+      if (block1) {
+        store.consumeBlock(block1, "nullify");
+      } else {
+        throw new Error("Block is undefined");
+      }
     },
     TIMEOUT,
   );
@@ -197,6 +203,12 @@ describe("ShieldedPool Transactions", () => {
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
+      // Consume the block and add nullifier to the store
+      if (block1) {
+        store.consumeBlock(block1, "nullify");
+      } else {
+        throw new Error("Block is undefined");
+      }
     },
     TIMEOUT,
   );
@@ -244,6 +256,12 @@ describe("ShieldedPool Transactions", () => {
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
+    
+      if (block1) {
+        store.consumeBlock(block1, "nullify");
+      } else {
+        throw new Error("Block is undefined");
+      }
 
       // Attempt to reuse the same nullifiers (should fail)
       const tx2 = await appChain.transaction(alice, async () => {
