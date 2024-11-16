@@ -28,12 +28,11 @@ function createTxInput(
   publicAmount: Field,
 ) {
   const oldRoot = merkleTree.getRoot();
-  const witnesses = inputs.map((input) => {
-    const serialized = input;
+  const witnesses = outputs.map((output) => {
     const commitment = Poseidon.hash([
-      serialized.amount,
-      serialized.blinding,
-      serialized.pubkey,
+      output.amount,
+      output.blinding,
+      output.pubkey,
     ]);
     const index = merkleTree.addLeaf(commitment); // Set the leaf
     return new MyMerkleWitness(merkleTree.getWitness(index));
@@ -129,7 +128,6 @@ describe("ShieldedPool Transactions", () => {
       const appChain = await setupAppChain();
       appChain.setSigner(alicePrivateKey);
 
-
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
       const balances = appChain.runtime.resolve("Balances");
       const store = new NoteStore(alicePrivateKey);
@@ -145,14 +143,12 @@ describe("ShieldedPool Transactions", () => {
       await tx0.send();
       await appChain.produceBlock();
 
-
       let tx = await appChain.transaction(alice, async () => {
         await balances.addBalance(tokenId, alice, Balance.from(100_000n));
       });
       await tx.sign();
       await tx.send();
       await appChain.produceBlock();
-
 
       let balance = await appChain.query.runtime.Balances.balances.get(
         BalancesKey.from(tokenId, alice),

@@ -49,7 +49,6 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
         const commitments: Field[] = [];
         let inputSum = Field(0);
         let outputSum = Field(0);
-        let newRoot = transactionInput.oldRoot;
         // Process inputs to compute nullifiers
         for (let i = 0; i < transactionInput.privateKeys.length; i++) {
           const privateKey = transactionInput.privateKeys[i];
@@ -60,10 +59,6 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
           const publicKey = privateKey.toPublicKey().toFields()[0];
           const commitment = Poseidon.hash([amount, blinding, publicKey]);
           const witnessIndex = merkleWitness.calculateIndex();
-          const oldWitnessRoot = merkleWitness.calculateRoot(Field(0));
-          newRoot.assertEquals(oldWitnessRoot, "Old root does not match the merkle Witness")
-          const currentWitnessRoot = merkleWitness.calculateRoot(commitment);
-          newRoot = currentWitnessRoot;
 
 
           const nullifier = Poseidon.hash([
@@ -77,14 +72,21 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
           inputSum = inputSum.add(amount);
         }
 
+        let newRoot = transactionInput.oldRoot;
         // Process outputs to compute commitments
         for (let i = 0; i < transactionInput.outputAmounts.length; i++) {
           const amount = transactionInput.outputAmounts[i];
           const publicKey = transactionInput.outputPublicKeys[i];
           const blinding = transactionInput.outputBlindings[i];
+          const merkleWitness = transactionInput.merkleWitnesses[i];
 
-          const commitment = Poseidon.hash([amount, publicKey, blinding]);
+          const commitment = Poseidon.hash([amount, blinding, publicKey]);
           commitments.push(commitment);
+
+          const oldWitnessRoot = merkleWitness.calculateRoot(Field(0));
+          newRoot.assertEquals(oldWitnessRoot, "Old root does not match the merkle Witness")
+          const currentWitnessRoot = merkleWitness.calculateRoot(commitment);
+          newRoot = currentWitnessRoot;
 
           outputSum = outputSum.add(amount);
         }
