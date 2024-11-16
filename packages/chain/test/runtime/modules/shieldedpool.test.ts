@@ -1,15 +1,23 @@
+import "reflect-metadata";
 import { TestingAppChain } from "@proto-kit/sdk";
 import { ShieldedPool } from "../../../src/runtime/modules/shieldedPool";
 import { IndexedMerkleTree } from "../../../src/runtime/modules/utils";
 import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/jointTxZkProgram";
 import { Note, NoteStore } from "../../../src/runtime/modules/types";
-import { PrivateKey, PublicKey, Field, MerkleWitness, Poseidon } from "o1js";
-import { UInt64 } from "@proto-kit/library";
+import {
+  PrivateKey,
+  PublicKey,
+  Field,
+  MerkleWitness,
+  Poseidon,
+  Struct,
+} from "o1js";
+import { Balance, BalancesKey, TokenId, UInt64 } from "@proto-kit/library";
 
 const TIMEOUT = 1_000_000;
 
 const treeHeight = 8;
-class MyMerkleWitness extends MerkleWitness(treeHeight) { }
+class MyMerkleWitness extends MerkleWitness(treeHeight) {}
 
 function createTxInput(
   privateKey: PrivateKey,
@@ -105,27 +113,43 @@ async function setupAppChain() {
       ShieldedPool: {},
     },
   });
+
+  await appChain.start();
   return appChain;
 }
 
 describe("ShieldedPool Transactions", () => {
-  it(
+  it.only(
     "should deposit",
     async () => {
       const alicePrivateKey = PrivateKey.random();
       const alice = alicePrivateKey.toPublicKey();
-
+      const tokenId = TokenId.from(0);
       const appChain = await setupAppChain();
 
-      await appChain.start();
-      appChain.setSigner(alicePrivateKey);
-
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
+      const balances = appChain.runtime.resolve("Balances");
       const store = new NoteStore(alicePrivateKey);
-      
+
+      appChain.setSigner(alicePrivateKey);
+      let tx = await appChain.transaction(alice, async () => {
+        await balances.mint(tokenId, alice, Balance.from(100_000n));
+      });
+      await tx.sign();
+      await tx.send();
+      await appChain.produceBlock();
+
       // Final root after adding all commitments
       const initialRoot = store.getMerkleTree().getRoot();
 
+      let balance = await appChain.query.runtime.Balances.balances.get(
+        BalancesKey.from(tokenId, alice),
+      );
+
+      if (!balance) {
+        throw new Error("No balance found for alice!!!");
+      }
+      return;
       // Set the Merkle root in the runtime module
       const tx0 = await appChain.transaction(alice, async () => {
         await shieldedPool.setRoot(initialRoot);
@@ -142,7 +166,7 @@ describe("ShieldedPool Transactions", () => {
 
       // Process the transaction
       const tx1 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(proof);
+        await shieldedPool.processTransaction(tokenId, proof);
       });
       await tx1.sign();
       await tx1.send();
@@ -159,6 +183,7 @@ describe("ShieldedPool Transactions", () => {
       const alicePrivateKey = PrivateKey.random();
       const alice = alicePrivateKey.toPublicKey();
 
+      const tokenId = TokenId.from(0);
       const appChain = await setupAppChain();
 
       await appChain.start();
@@ -178,7 +203,6 @@ describe("ShieldedPool Transactions", () => {
       await tx0.send();
       await appChain.produceBlock();
 
-
       store.addNote(0n, Note.new(alice, 1000n));
       store.addNote(0n, Note.new(alice, 2000n));
 
@@ -189,7 +213,7 @@ describe("ShieldedPool Transactions", () => {
 
       // Process the transaction
       const tx1 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(proof);
+        await shieldedPool.processTransaction(tokenId, proof);
       });
       await tx1.sign();
       await tx1.send();
@@ -208,6 +232,7 @@ describe("ShieldedPool Transactions", () => {
       const bobPrivateKey = PrivateKey.random();
       const bob = bobPrivateKey.toPublicKey();
 
+      const tokenId = TokenId.from(0);
       const appChain = await setupAppChain();
 
       await appChain.start();
@@ -236,7 +261,7 @@ describe("ShieldedPool Transactions", () => {
 
       // Process the transaction
       const tx1 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(proof);
+        await shieldedPool.processTransaction(tokenId, proof);
       });
       await tx1.sign();
       await tx1.send();
@@ -247,7 +272,7 @@ describe("ShieldedPool Transactions", () => {
 
       // Attempt to reuse the same nullifiers (should fail)
       const tx2 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(proof);
+        await shieldedPool.processTransaction(tokenId, proof);
       });
       await tx2.sign();
       await tx2.send();
