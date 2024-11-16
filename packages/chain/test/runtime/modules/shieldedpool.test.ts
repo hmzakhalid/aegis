@@ -33,19 +33,28 @@ function createTxInput(
   outputs: Note[],
   publicAmount: Field,
 ) {
+  const oldRoot = merkleTree.getRoot();
+  const nullifiers: any[] = []
   const witnesses = inputs.map((input, i) => {
     const publicKey = input.pubkey;
     const commitment = Poseidon.hash([input.amount, input.blinding, publicKey]);
-    const index = merkleTree.addLeaf(commitment); // Set the leaf
+    const index = merkleTree.addLeaf(commitment);
+    const nullifier = Poseidon.hash([
+      commitment,
+      Field(index),
+      privateKey.toFields()[0],
+    ]);
+    nullifiers.push(nullifier);
     return new MyMerkleWitness(merkleTree.getWitness(index));
   });
 
-  // Prepare transaction inputs
   const transactionInput = {
     privateKeys: inputs.map(() => privateKey),
     inputAmounts: inputs.map((i) => i.amount),
     blindings: inputs.map((i) => i.blinding),
+    oldRoot,
     merkleWitnesses: witnesses,
+    nullifiers,
     outputAmounts: outputs.map((o) => o.amount),
     outputPublicKeys: outputs.map((o) => o.pubkey),
     outputBlindings: outputs.map((o) => o.blinding),
@@ -78,6 +87,17 @@ describe("ShieldedPool Transactions", () => {
     const shieldedPool = appChain.runtime.resolve("ShieldedPool");
 
     const merkleTree = new IndexedMerkleTree(treeHeight);
+
+
+    // Set the initial Zero Root
+    const initialRoot = merkleTree.getRoot();
+    // Set the Merkle root in the runtime module
+    const tx0 = await appChain.transaction(alice, async () => {
+      await shieldedPool.setRoot(initialRoot);
+    });
+    await tx0.sign();
+    await tx0.send();
+
 
     const inputs = [
       {
@@ -114,21 +134,7 @@ describe("ShieldedPool Transactions", () => {
       Field(0),
     );
 
-    // Final root after adding all commitments
-    const finalRoot = merkleTree.getRoot();
-    // Set the Merkle root in the runtime module
-    const tx0 = await appChain.transaction(alice, async () => {
-      await shieldedPool.setRoot(finalRoot);
-    });
-    await tx0.sign();
-    await tx0.send();
-
-    // Verify the stored root matches the final root
-    const storedRoot = await shieldedPool.root.get();
-    storedRoot.value.assertEquals(
-      finalRoot,
-      "Mismatch between stored and final Merkle root",
-    );
+    console.dir(transactionInput.nullifiers, { depth: null })
 
     // Generate a valid proof
     const proof =
@@ -144,6 +150,10 @@ describe("ShieldedPool Transactions", () => {
     // Verify the transaction was successful
     const block1 = await appChain.produceBlock();
     expect(block1?.transactions[0].status.toBoolean()).toBe(true);
+    
+    console.log("OldRoot", transactionInput.oldRoot)
+    const newRoot = await appChain.query.runtime.ShieldedPool.root.get()
+    console.log("newRoot", newRoot)
 
     // Attempt to reuse the same nullifiers (should fail)
     const tx2 = await appChain.transaction(alice, async () => {
