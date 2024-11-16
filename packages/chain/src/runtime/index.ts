@@ -2,7 +2,7 @@ import { Balance, VanillaRuntimeModules } from "@proto-kit/library";
 import { ModulesConfig } from "@proto-kit/common";
 
 import { Balances } from "./modules/balances";
-import { ShieldedPool } from "./modules/preImageVerifier";
+import { ShieldedPool } from "./modules/shieldedPool";
 
 export const modules = VanillaRuntimeModules.with({
   Balances,

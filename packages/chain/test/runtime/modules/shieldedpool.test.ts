@@ -1,6 +1,7 @@
 import { TestingAppChain } from "@proto-kit/sdk";
-import { ShieldedPool } from "../../../src/runtime/modules/preImageVerifier";
-import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/preimageZkProgram";
+import { ShieldedPool } from "../../../src/runtime/modules/shieldedPool";
+import { IndexedMerkleTree } from "../../../src/runtime/modules/utils";
+import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/jointTxZkProgram";
 import {
   PrivateKey,
   PublicKey,
@@ -25,21 +26,18 @@ const treeHeight = 8;
 class MyMerkleWitness extends MerkleWitness(treeHeight) { }
 
 
-
-
 function createTxInput(
   privateKey: PrivateKey,
-  merkleTree: MerkleTree,
+  merkleTree: IndexedMerkleTree,
   inputs: Note[],
   outputs: Note[],
-  index: bigint,
   publicAmount: Field,
 ) {
   const witnesses = inputs.map((input, i) => {
     const publicKey = input.pubkey;
     const commitment = Poseidon.hash([input.amount, input.blinding, publicKey]);
-    merkleTree.setLeaf(BigInt(i), commitment); // Set the leaf
-    return new MyMerkleWitness(merkleTree.getWitness(BigInt(i)));
+    const index = merkleTree.addLeaf(commitment); // Set the leaf
+    return new MyMerkleWitness(merkleTree.getWitness(index));
   });
 
   // Prepare transaction inputs
@@ -79,7 +77,7 @@ describe("ShieldedPool Transactions", () => {
     appChain.setSigner(alicePrivateKey);
     const shieldedPool = appChain.runtime.resolve("ShieldedPool");
 
-    const merkleTree = new MerkleTree(treeHeight);
+    const merkleTree = new IndexedMerkleTree(treeHeight);
 
     const inputs = [
       {
@@ -113,7 +111,6 @@ describe("ShieldedPool Transactions", () => {
       merkleTree,
       inputs,
       outputs,
-      0n,
       Field(0),
     );
 

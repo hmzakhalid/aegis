@@ -6,7 +6,7 @@ import {
 } from "@proto-kit/module";
 import { State, StateMap, assert } from "@proto-kit/protocol";
 import { Field, Bool } from "o1js";
-import { JoinSplitTransactionProof } from "./preimageZkProgram";
+import { JoinSplitTransactionProof } from "./jointTxZkProgram";
 
 @runtimeModule()
 export class ShieldedPool extends RuntimeModule<Record<string, never>> {
