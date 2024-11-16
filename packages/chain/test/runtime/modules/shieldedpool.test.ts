@@ -2,18 +2,19 @@ import { TestingAppChain } from "@proto-kit/sdk";
 import { ShieldedPool } from "../../../src/runtime/modules/shieldedPool";
 import { IndexedMerkleTree } from "../../../src/runtime/modules/utils";
 import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/jointTxZkProgram";
-import { Note, SerializedNote } from "../../../src/runtime/modules/types";
+import {
+  Note,
+  NoteStore,
+} from "../../../src/runtime/modules/types";
 import {
   PrivateKey,
   PublicKey,
   Field,
-  MerkleTree,
   MerkleWitness,
   Poseidon,
 } from "o1js";
 import { UInt64 } from "@proto-kit/library";
 
-const privateKeyToField = (pk: PrivateKey) => pk.toFields()[0];
 const treeHeight = 8;
 class MyMerkleWitness extends MerkleWitness(treeHeight) { }
 
@@ -24,11 +25,10 @@ function createTxInput(
   outputs: Note[],
   publicAmount: Field,
 ) {
-
-  const serializedInputs = inputs.map(i => i.serialize());
-  const serializedOutputs = outputs.map(i => i.serialize());
+  const serializedInputs = inputs.map((i) => i);
+  const serializedOutputs = outputs.map((i) => i);
   const witnesses = inputs.map((input) => {
-    const serialized = input.serialize();
+    const serialized = input;
     const commitment = Poseidon.hash([
       serialized.amount,
       serialized.blinding,
@@ -51,6 +51,29 @@ function createTxInput(
   };
 
   return transactionInput;
+}
+
+function deposit(store: NoteStore, amount: bigint) { }
+
+function withdraw(store: NoteStore, amount: bigint) { }
+
+function transfer(store: NoteStore, to: PublicKey, amount: bigint) {
+  const [inputs, total] = store.getNotesUpTo(amount);
+  if (inputs.length === 0) {
+    throw new Error("Not enough balance!");
+  }
+console.log({inputs, total})
+  let change = total - amount;
+  change = change > 0n ? change : 0n;
+
+  const outputs = [
+    Note.new(to, amount),
+    Note.new(store.getPublicKey(), change),
+  ];
+  let privateKey = store.getPrivateKey();
+  let publicAmount = Field(0);
+  let merkleTree = store.getMerkleTree();
+  return createTxInput(privateKey, merkleTree, inputs, outputs, publicAmount);
 }
 
 describe("ShieldedPool Transactions", () => {
@@ -77,20 +100,16 @@ describe("ShieldedPool Transactions", () => {
 
     const merkleTree = new IndexedMerkleTree(treeHeight);
 
-    const inputs = [new Note(alice, 1000n), new Note(alice, 2000n)];
-    const outputs = [new Note(bob, 1500n), new Note(alice, 1500n)];
+    const store = new NoteStore(alicePrivateKey);
 
+    store.addNote(0n, Note.new(alice, 1000n));
+    store.addNote(0n, Note.new(alice, 2000n));
 
-    const transactionInput = createTxInput(
-      alicePrivateKey,
-      merkleTree,
-      inputs,
-      outputs,
-      Field(0),
-    );
+    const transactionInput = transfer(store, bob, 1500n);
 
     // Final root after adding all commitments
     const finalRoot = merkleTree.getRoot();
+
     // Set the Merkle root in the runtime module
     const tx0 = await appChain.transaction(alice, async () => {
       await shieldedPool.setRoot(finalRoot);
