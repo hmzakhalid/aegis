@@ -4,7 +4,7 @@ import { ShieldedPool } from "../../../src/runtime/modules/shieldedPool";
 import { IndexedMerkleTree } from "../../../src/runtime/modules/utils";
 import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/jointTxZkProgram";
 import { Balances } from "../../../src/runtime/modules/balances";
-import { Note, NoteStore } from "../../../src/runtime/modules/types";
+import { Note, Wallet } from "../../../src/runtime/modules/types";
 import {
   PrivateKey,
   PublicKey,
@@ -18,7 +18,7 @@ import { Balance, BalancesKey, TokenId, UInt64 } from "@proto-kit/library";
 const TIMEOUT = 1_000_000;
 
 const treeHeight = 8;
-class MyMerkleWitness extends MerkleWitness(treeHeight) { }
+class MyMerkleWitness extends MerkleWitness(treeHeight) {}
 
 function createTxInput(
   privateKey: PrivateKey,
@@ -27,6 +27,7 @@ function createTxInput(
   outputs: Note[],
   publicAmount: Field,
 ) {
+  let merkleIndexes: bigint[] = [];
   const oldRoot = merkleTree.getRoot();
   const witnesses = outputs.map((output) => {
     const commitment = Poseidon.hash([
@@ -35,6 +36,7 @@ function createTxInput(
       output.pubkey,
     ]);
     const index = merkleTree.addLeaf(commitment); // Set the leaf
+    merkleIndexes.push(index);
     return new MyMerkleWitness(merkleTree.getWitness(index));
   });
 
@@ -48,27 +50,29 @@ function createTxInput(
     outputPublicKeys: outputs.map((o) => o.pubkey),
     outputBlindings: outputs.map((o) => o.blinding),
     publicAmount,
+    outputs,
+    inputs,
+    merkleIndexes,
   };
 
   return transactionInput;
 }
 
-function deposit(store: NoteStore, amount: bigint) {
-  let privateKey = store.getPrivateKey();
-  let publicKey = store.getPublicKey();
-  let merkleTree = store.getMerkleTree();
+function deposit(wallet: Wallet, amount: bigint) {
+  let privateKey = wallet.getPrivateKey();
+  let publicKey = wallet.getPublicKey();
+  let merkleTree = wallet.getMerkleTree();
 
   let inputs = [Note.new(publicKey, 0n), Note.new(publicKey, 0n)];
   let outputs = [Note.new(publicKey, amount), Note.new(publicKey, 0n)];
-
   let publicAmount = Field(Number(amount));
 
   return createTxInput(privateKey, merkleTree, inputs, outputs, publicAmount);
 }
 
-function withdraw(store: NoteStore, amount: bigint) {
-  const [inputs, total] = store.getNotesUpTo(amount);
-  let publicKey = store.getPublicKey();
+function withdraw(wallet: Wallet, amount: bigint) {
+  const [inputs, total] = wallet.getNotesUpTo(amount);
+  let publicKey = wallet.getPublicKey();
 
   if (inputs.length === 0) {
     throw new Error("Not enough balance!");
@@ -78,14 +82,14 @@ function withdraw(store: NoteStore, amount: bigint) {
   change = change > 0n ? change : 0n;
   const outputs = [Note.new(publicKey, 0n), Note.new(publicKey, change)];
 
-  let privateKey = store.getPrivateKey();
+  let privateKey = wallet.getPrivateKey();
   let publicAmount = Field(-1n * amount);
-  let merkleTree = store.getMerkleTree();
+  let merkleTree = wallet.getMerkleTree();
   return createTxInput(privateKey, merkleTree, inputs, outputs, publicAmount);
 }
 
-function transfer(store: NoteStore, to: PublicKey, amount: bigint) {
-  const [inputs, total] = store.getNotesUpTo(amount);
+function transfer(wallet: Wallet, to: PublicKey, amount: bigint) {
+  const [inputs, total] = wallet.getNotesUpTo(amount);
   if (inputs.length === 0) {
     throw new Error("Not enough balance!");
   }
@@ -94,11 +98,11 @@ function transfer(store: NoteStore, to: PublicKey, amount: bigint) {
 
   const outputs = [
     Note.new(to, amount),
-    Note.new(store.getPublicKey(), change),
+    Note.new(wallet.getPublicKey(), change),
   ];
-  let privateKey = store.getPrivateKey();
+  let privateKey = wallet.getPrivateKey();
   let publicAmount = Field(0);
-  let merkleTree = store.getMerkleTree();
+  let merkleTree = wallet.getMerkleTree();
   return createTxInput(privateKey, merkleTree, inputs, outputs, publicAmount);
 }
 
@@ -130,10 +134,10 @@ describe("ShieldedPool Transactions", () => {
 
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
       const balances = appChain.runtime.resolve("Balances");
-      const store = new NoteStore(alicePrivateKey);
+      const wallet = new Wallet(alicePrivateKey);
 
       // Final root after adding all commitments
-      const initialRoot = store.getMerkleTree().getRoot();
+      const initialRoot = wallet.getMerkleTree().getRoot();
 
       // Set the Merkle root in the runtime module
       const tx0 = await appChain.transaction(alice, async () => {
@@ -158,7 +162,12 @@ describe("ShieldedPool Transactions", () => {
         throw new Error("No balance found for alice!!!");
       }
 
-      const transactionInput = deposit(store, 1500n);
+      const { outputs, inputs, merkleIndexes, ...transactionInput } = deposit(
+        wallet,
+        1500n,
+      );
+
+      wallet.addNotesFromOutputs(outputs, merkleIndexes);
 
       // Generate a valid proof
       const proof =
@@ -174,12 +183,15 @@ describe("ShieldedPool Transactions", () => {
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
-      // Consume the block and add nullifier to the store
+      // Consume the block and add nullifier to the wallet
       if (block1) {
-        store.consumeBlock(block1, "nullify");
+        wallet.consumeBlock(block1, "nullify");
       } else {
         throw new Error("Block is undefined");
       }
+
+      let total = wallet.getBalance();
+      expect(Number(total)).toBe(1500);
     },
     TIMEOUT,
   );
@@ -197,10 +209,10 @@ describe("ShieldedPool Transactions", () => {
 
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
 
-      const store = new NoteStore(alicePrivateKey);
+      const wallet = new Wallet(alicePrivateKey);
 
       // Final root after adding all commitments
-      const initialRoot = store.getMerkleTree().getRoot();
+      const initialRoot = wallet.getMerkleTree().getRoot();
       // Set the Merkle root in the runtime module
       const tx0 = await appChain.transaction(alice, async () => {
         await shieldedPool.setRoot(initialRoot);
@@ -209,10 +221,10 @@ describe("ShieldedPool Transactions", () => {
       await tx0.send();
       await appChain.produceBlock();
 
-      store.addNote(0n, Note.new(alice, 1000n));
-      store.addNote(0n, Note.new(alice, 2000n));
+      wallet.addNote(0n, Note.new(alice, 1000n));
+      wallet.addNote(0n, Note.new(alice, 2000n));
 
-      const transactionInput = withdraw(store, 1500n);
+      const transactionInput = withdraw(wallet, 1500n);
       // Generate a valid proof
       const proof =
         await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
@@ -227,9 +239,9 @@ describe("ShieldedPool Transactions", () => {
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
-      // Consume the block and add nullifier to the store
+      // Consume the block and add nullifier to the wallet
       if (block1) {
-        store.consumeBlock(block1, "nullify");
+        wallet.consumeBlock(block1, "nullify");
       } else {
         throw new Error("Block is undefined");
       }
@@ -250,10 +262,10 @@ describe("ShieldedPool Transactions", () => {
       await appChain.start();
       appChain.setSigner(alicePrivateKey);
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
-      const store = new NoteStore(alicePrivateKey);
+      const wallet = new Wallet(alicePrivateKey);
 
       // Final root after adding all commitments
-      const initialRoot = store.getMerkleTree().getRoot();
+      const initialRoot = wallet.getMerkleTree().getRoot();
       // Set the Merkle root in the runtime module
       const tx0 = await appChain.transaction(alice, async () => {
         await shieldedPool.setRoot(initialRoot);
@@ -262,10 +274,10 @@ describe("ShieldedPool Transactions", () => {
       await tx0.send();
       await appChain.produceBlock();
 
-      store.addNote(0n, Note.new(alice, 1000n));
-      store.addNote(0n, Note.new(alice, 2000n));
+      wallet.addNote(0n, Note.new(alice, 1000n));
+      wallet.addNote(0n, Note.new(alice, 2000n));
 
-      const transactionInput = transfer(store, bob, 1500n);
+      const transactionInput = transfer(wallet, bob, 1500n);
 
       // Generate a valid proof
       const proof =
@@ -281,9 +293,9 @@ describe("ShieldedPool Transactions", () => {
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
-    
+
       if (block1) {
-        store.consumeBlock(block1, "nullify");
+        wallet.consumeBlock(block1, "nullify");
       } else {
         throw new Error("Block is undefined");
       }

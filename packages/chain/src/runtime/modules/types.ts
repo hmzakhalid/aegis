@@ -59,7 +59,7 @@ export class Note {
   }
 }
 
-export class NoteStore {
+export class Wallet {
   constructor(
     private privateKey: PrivateKey,
     private notes: NoteWithMeta[] = [],
@@ -90,10 +90,15 @@ export class NoteStore {
 
   consumeBlock(block: Block, eventName: string) {
     const events = block?.transactions?.flatMap((tx) => tx.events) || [];
-    const matchingEvents = events.filter((event) => event.eventName === eventName);
+    console.log({ events });
+    const matchingEvents = events.filter(
+      (event) => event.eventName === eventName,
+    );
     for (const event of matchingEvents) {
       const nullifierField = event.data[0];
       if (nullifierField instanceof Field) {
+        console.log("adding nullifier");
+        console.dir(nullifierField, { depth: null });
         this.nullifiers.push(nullifierField);
       } else {
         console.warn("Unexpected nullifier format:", event.data);
@@ -109,6 +114,17 @@ export class NoteStore {
     return this.privateKey.toPublicKey();
   }
 
+  getBalance() {
+    let unspent = this.getUnspentNotes();
+    console.dir({ unspent }, { depth: null });
+    let total = unspent.reduce((acc, note) => {
+      acc += note.amount.toBigInt();
+      return acc;
+    }, 0n);
+
+    return total;
+  }
+
   addNote(index: bigint, note: Note | NoteWithMeta) {
     const nwm =
       note instanceof Note ? note.metaNote(this.privateKey, index) : note;
@@ -117,6 +133,12 @@ export class NoteStore {
 
   addNullifer(nullifier: Field) {
     this.nullifiers.push(nullifier);
+  }
+
+  addNotesFromOutputs(outputs: Note[], merkleIndexes: bigint[]) {
+    for (let i = 0; i < outputs.length; i++) {
+      this.addNote(merkleIndexes[i], outputs[i]);
+    }
   }
 
   getMerkleTree() {
