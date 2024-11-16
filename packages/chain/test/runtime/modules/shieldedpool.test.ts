@@ -2,6 +2,7 @@ import { TestingAppChain } from "@proto-kit/sdk";
 import { ShieldedPool } from "../../../src/runtime/modules/shieldedPool";
 import { IndexedMerkleTree } from "../../../src/runtime/modules/utils";
 import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/jointTxZkProgram";
+import { Note, SerializedNote } from "../../../src/runtime/modules/types";
 import {
   PrivateKey,
   PublicKey,
@@ -12,19 +13,9 @@ import {
 } from "o1js";
 import { UInt64 } from "@proto-kit/library";
 
-const randomInt = () => Math.floor(Math.random() * 1000);
-const pubkeyToField = (pk: PublicKey) => pk.toFields()[0];
 const privateKeyToField = (pk: PrivateKey) => pk.toFields()[0];
-
-type Note = {
-  pubkey: Field;
-  blinding: Field;
-  amount: Field;
-};
-
 const treeHeight = 8;
 class MyMerkleWitness extends MerkleWitness(treeHeight) { }
-
 
 function createTxInput(
   privateKey: PrivateKey,
@@ -33,22 +24,29 @@ function createTxInput(
   outputs: Note[],
   publicAmount: Field,
 ) {
-  const witnesses = inputs.map((input, i) => {
-    const publicKey = input.pubkey;
-    const commitment = Poseidon.hash([input.amount, input.blinding, publicKey]);
+
+  const serializedInputs = inputs.map(i => i.serialize());
+  const serializedOutputs = outputs.map(i => i.serialize());
+  const witnesses = inputs.map((input) => {
+    const serialized = input.serialize();
+    const commitment = Poseidon.hash([
+      serialized.amount,
+      serialized.blinding,
+      serialized.pubkey,
+    ]);
     const index = merkleTree.addLeaf(commitment); // Set the leaf
     return new MyMerkleWitness(merkleTree.getWitness(index));
   });
 
   // Prepare transaction inputs
   const transactionInput = {
-    privateKeys: inputs.map(() => privateKey),
-    inputAmounts: inputs.map((i) => i.amount),
-    blindings: inputs.map((i) => i.blinding),
+    privateKeys: serializedInputs.map(() => privateKey),
+    inputAmounts: serializedInputs.map((i) => i.amount),
+    blindings: serializedInputs.map((i) => i.blinding),
     merkleWitnesses: witnesses,
-    outputAmounts: outputs.map((o) => o.amount),
-    outputPublicKeys: outputs.map((o) => o.pubkey),
-    outputBlindings: outputs.map((o) => o.blinding),
+    outputAmounts: serializedOutputs.map((o) => o.amount),
+    outputPublicKeys: serializedOutputs.map((o) => o.pubkey),
+    outputBlindings: serializedOutputs.map((o) => o.blinding),
     publicAmount,
   };
 
@@ -79,31 +77,8 @@ describe("ShieldedPool Transactions", () => {
 
     const merkleTree = new IndexedMerkleTree(treeHeight);
 
-    const inputs = [
-      {
-        pubkey: pubkeyToField(alice),
-        amount: Field(1000),
-        blinding: Field(randomInt()),
-      },
-      {
-        pubkey: pubkeyToField(alice),
-        amount: Field(2000),
-        blinding: Field(randomInt()),
-      },
-    ];
-
-    const outputs = [
-      {
-        pubkey: pubkeyToField(bob),
-        amount: Field(1500),
-        blinding: Field(randomInt()),
-      },
-      {
-        pubkey: pubkeyToField(alice),
-        amount: Field(1500),
-        blinding: Field(randomInt()),
-      },
-    ];
+    const inputs = [new Note(alice, 1000n), new Note(alice, 2000n)];
+    const outputs = [new Note(bob, 1500n), new Note(alice, 1500n)];
 
 
     const transactionInput = createTxInput(
