@@ -3,6 +3,7 @@ import { TestingAppChain } from "@proto-kit/sdk";
 import { ShieldedPool } from "../../../src/runtime/modules/shieldedPool";
 import { IndexedMerkleTree } from "../../../src/runtime/modules/utils";
 import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/jointTxZkProgram";
+import { Balances } from "../../../src/runtime/modules/balances";
 import { Note, NoteStore } from "../../../src/runtime/modules/types";
 import {
   PrivateKey,
@@ -106,7 +107,7 @@ async function setupAppChain() {
   await JoinSplitTransactionZkProgram.compile();
 
   // Initialize the testing app chain with the ShieldedPool module
-  const appChain = TestingAppChain.fromRuntime({ ShieldedPool });
+  const appChain = TestingAppChain.fromRuntime({ ShieldedPool, Balances });
   appChain.configurePartial({
     Runtime: {
       Balances: { totalSupply: UInt64.from(10000) },
@@ -133,7 +134,7 @@ describe("ShieldedPool Transactions", () => {
 
       appChain.setSigner(alicePrivateKey);
       let tx = await appChain.transaction(alice, async () => {
-        await balances.mint(tokenId, alice, Balance.from(100_000n));
+        await balances.addBalance(tokenId, alice, Balance.from(100_000n));
       });
       await tx.sign();
       await tx.send();
@@ -149,7 +150,9 @@ describe("ShieldedPool Transactions", () => {
       if (!balance) {
         throw new Error("No balance found for alice!!!");
       }
-      return;
+
+      console.dir({ balance }, { depth: null });
+
       // Set the Merkle root in the runtime module
       const tx0 = await appChain.transaction(alice, async () => {
         await shieldedPool.setRoot(initialRoot);
