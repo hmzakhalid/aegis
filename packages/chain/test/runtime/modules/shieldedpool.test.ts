@@ -12,7 +12,51 @@ import {
 import { UInt64 } from "@proto-kit/library";
 
 const randomInt = () => Math.floor(Math.random() * 1000);
-const toField = (pk: PublicKey) => pk.toFields()[0];
+const pubkeyToField = (pk: PublicKey) => pk.toFields()[0];
+const privateKeyToField = (pk: PrivateKey) => pk.toFields()[0];
+
+type Note = {
+  pubkey: Field;
+  blinding: Field;
+  amount: Field;
+};
+
+const treeHeight = 8;
+class MyMerkleWitness extends MerkleWitness(treeHeight) { }
+
+
+
+
+function createTxInput(
+  privateKey: PrivateKey,
+  merkleTree: MerkleTree,
+  inputs: Note[],
+  outputs: Note[],
+  index: bigint,
+  publicAmount: Field,
+) {
+  const witnesses = inputs.map((input, i) => {
+    const publicKey = input.pubkey;
+    const commitment = Poseidon.hash([input.amount, input.blinding, publicKey]);
+    merkleTree.setLeaf(BigInt(i), commitment); // Set the leaf
+    return new MyMerkleWitness(merkleTree.getWitness(BigInt(i)));
+  });
+
+  // Prepare transaction inputs
+  const transactionInput = {
+    privateKeys: inputs.map(() => privateKey),
+    inputAmounts: inputs.map((i) => i.amount),
+    blindings: inputs.map((i) => i.blinding),
+    merkleWitnesses: witnesses,
+    outputAmounts: outputs.map((o) => o.amount),
+    outputPublicKeys: outputs.map((o) => o.pubkey),
+    outputBlindings: outputs.map((o) => o.blinding),
+    publicAmount,
+  };
+
+  return transactionInput;
+}
+
 describe("ShieldedPool Transactions", () => {
   it("should process valid transactions and reject duplicate nullifiers", async () => {
     await JoinSplitTransactionZkProgram.compile();
@@ -25,32 +69,26 @@ describe("ShieldedPool Transactions", () => {
         ShieldedPool: {},
       },
     });
+
     const alicePrivateKey = PrivateKey.random();
     const alice = alicePrivateKey.toPublicKey();
     const bobPrivateKey = PrivateKey.random();
-    const bob = alicePrivateKey.toPublicKey();
+    const bob = bobPrivateKey.toPublicKey();
+
     await appChain.start();
     appChain.setSigner(alicePrivateKey);
     const shieldedPool = appChain.runtime.resolve("ShieldedPool");
 
-    const treeHeight = 8;
-    class MyMerkleWitness extends MerkleWitness(treeHeight) { }
     const merkleTree = new MerkleTree(treeHeight);
-
-    // Define inputs and outputs for the transaction
-    const privateKeys = [alicePrivateKey, alicePrivateKey];
-    const inputAmounts = [Field(1000), Field(2000)];
-    const inputBlindings = [Field(123), Field(456)];
-    const publicAmount = Field(0);
 
     const inputs = [
       {
-        pubkey: toField(alice),
+        pubkey: pubkeyToField(alice),
         amount: Field(1000),
         blinding: Field(randomInt()),
       },
       {
-        pubkey: toField(alice),
+        pubkey: pubkeyToField(alice),
         amount: Field(2000),
         blinding: Field(randomInt()),
       },
@@ -58,28 +96,26 @@ describe("ShieldedPool Transactions", () => {
 
     const outputs = [
       {
-        pubkey: toField(bob),
+        pubkey: pubkeyToField(bob),
         amount: Field(1500),
         blinding: Field(randomInt()),
       },
       {
-        pubkey: toField(alice),
+        pubkey: pubkeyToField(alice),
         amount: Field(1500),
         blinding: Field(randomInt()),
       },
     ];
 
-    // Add commitments and generate Merkle proofs
-    const witnesses = inputs.map((input, i) => {
-      const publicKey = input.pubkey;
-      const commitment = Poseidon.hash([
-        input.amount,
-        input.blinding,
-        publicKey,
-      ]);
-      merkleTree.setLeaf(BigInt(i), commitment); // Set the leaf
-      return new MyMerkleWitness(merkleTree.getWitness(BigInt(i)));
-    });
+
+    const transactionInput = createTxInput(
+      alicePrivateKey,
+      merkleTree,
+      inputs,
+      outputs,
+      0n,
+      Field(0),
+    );
 
     // Final root after adding all commitments
     const finalRoot = merkleTree.getRoot();
@@ -96,18 +132,6 @@ describe("ShieldedPool Transactions", () => {
       finalRoot,
       "Mismatch between stored and final Merkle root",
     );
-
-    // Prepare transaction inputs
-    const transactionInput = {
-      privateKeys,
-      inputAmounts,
-      blindings: inputBlindings,
-      merkleWitnesses: witnesses,
-      outputAmounts: outputs.map((o) => o.amount),
-      outputPublicKeys: outputs.map((o) => o.pubkey),
-      outputBlindings: outputs.map((o) => o.blinding),
-      publicAmount,
-    };
 
     // Generate a valid proof
     const proof =
