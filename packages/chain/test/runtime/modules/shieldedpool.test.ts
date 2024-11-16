@@ -1,41 +1,82 @@
 import { TestingAppChain } from "@proto-kit/sdk";
 import { ShieldedPool } from "../../../src/runtime/modules/preImageVerifier";
 import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/preimageZkProgram";
-import { PrivateKey, Field, MerkleTree, MerkleWitness, Poseidon } from "o1js";
+import {
+  PrivateKey,
+  PublicKey,
+  Field,
+  MerkleTree,
+  MerkleWitness,
+  Poseidon,
+} from "o1js";
 import { UInt64 } from "@proto-kit/library";
 
-
+const randomInt = () => Math.floor(Math.random() * 1000);
+const toField = (pk: PublicKey) => pk.toFields()[0];
 describe("ShieldedPool Transactions", () => {
   it("should process valid transactions and reject duplicate nullifiers", async () => {
     await JoinSplitTransactionZkProgram.compile();
 
     // Initialize the testing app chain with the ShieldedPool module
     const appChain = TestingAppChain.fromRuntime({ ShieldedPool });
-    appChain.configurePartial({ Runtime: { Balances: { totalSupply: UInt64.from(10000) }, ShieldedPool: {} } });
+    appChain.configurePartial({
+      Runtime: {
+        Balances: { totalSupply: UInt64.from(10000) },
+        ShieldedPool: {},
+      },
+    });
     const alicePrivateKey = PrivateKey.random();
     const alice = alicePrivateKey.toPublicKey();
-
+    const bobPrivateKey = PrivateKey.random();
+    const bob = alicePrivateKey.toPublicKey();
     await appChain.start();
     appChain.setSigner(alicePrivateKey);
     const shieldedPool = appChain.runtime.resolve("ShieldedPool");
 
     const treeHeight = 8;
-    class MyMerkleWitness extends MerkleWitness(treeHeight) {}
+    class MyMerkleWitness extends MerkleWitness(treeHeight) { }
     const merkleTree = new MerkleTree(treeHeight);
 
     // Define inputs and outputs for the transaction
-    const privateKeys = [PrivateKey.random(), PrivateKey.random()];
+    const privateKeys = [alicePrivateKey, alicePrivateKey];
     const inputAmounts = [Field(1000), Field(2000)];
     const inputBlindings = [Field(123), Field(456)];
-    const outputAmounts = [Field(1500), Field(1500)];
-    const outputPubkeys = [Field(789), Field(101112)];
-    const outputBlindings = [Field(333), Field(444)];
     const publicAmount = Field(0);
 
+    const inputs = [
+      {
+        pubkey: toField(alice),
+        amount: Field(1000),
+        blinding: Field(randomInt()),
+      },
+      {
+        pubkey: toField(alice),
+        amount: Field(2000),
+        blinding: Field(randomInt()),
+      },
+    ];
+
+    const outputs = [
+      {
+        pubkey: toField(bob),
+        amount: Field(1500),
+        blinding: Field(randomInt()),
+      },
+      {
+        pubkey: toField(alice),
+        amount: Field(1500),
+        blinding: Field(randomInt()),
+      },
+    ];
+
     // Add commitments and generate Merkle proofs
-    const witnesses = privateKeys.map((_, i) => {
-      const publicKey = privateKeys[i].toPublicKey().toFields()[0];
-      const commitment = Poseidon.hash([inputAmounts[i], inputBlindings[i], publicKey]);
+    const witnesses = inputs.map((input, i) => {
+      const publicKey = input.pubkey;
+      const commitment = Poseidon.hash([
+        input.amount,
+        input.blinding,
+        publicKey,
+      ]);
       merkleTree.setLeaf(BigInt(i), commitment); // Set the leaf
       return new MyMerkleWitness(merkleTree.getWitness(BigInt(i)));
     });
@@ -51,7 +92,10 @@ describe("ShieldedPool Transactions", () => {
 
     // Verify the stored root matches the final root
     const storedRoot = await shieldedPool.root.get();
-    storedRoot.value.assertEquals(finalRoot, "Mismatch between stored and final Merkle root");
+    storedRoot.value.assertEquals(
+      finalRoot,
+      "Mismatch between stored and final Merkle root",
+    );
 
     // Prepare transaction inputs
     const transactionInput = {
@@ -59,14 +103,15 @@ describe("ShieldedPool Transactions", () => {
       inputAmounts,
       blindings: inputBlindings,
       merkleWitnesses: witnesses,
-      outputAmounts,
-      outputPublicKeys: outputPubkeys,
-      outputBlindings,
+      outputAmounts: outputs.map((o) => o.amount),
+      outputPublicKeys: outputs.map((o) => o.pubkey),
+      outputBlindings: outputs.map((o) => o.blinding),
       publicAmount,
     };
 
     // Generate a valid proof
-    const proof = await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
+    const proof =
+      await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
 
     // Process the transaction
     const tx1 = await appChain.transaction(alice, async () => {
