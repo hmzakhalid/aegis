@@ -18,7 +18,7 @@ import { Balance, BalancesKey, TokenId, UInt64 } from "@proto-kit/library";
 const TIMEOUT = 1_000_000;
 
 const treeHeight = 8;
-class MyMerkleWitness extends MerkleWitness(treeHeight) {}
+class MyMerkleWitness extends MerkleWitness(treeHeight) { }
 
 function createTxInput(
   privateKey: PrivateKey,
@@ -110,7 +110,7 @@ async function setupAppChain() {
   const appChain = TestingAppChain.fromRuntime({ ShieldedPool, Balances });
   appChain.configurePartial({
     Runtime: {
-      Balances: { totalSupply: UInt64.from(10000) },
+      Balances: { totalSupply: UInt64.from(10000000) },
       ShieldedPool: {},
     },
   });
@@ -127,31 +127,15 @@ describe("ShieldedPool Transactions", () => {
       const alice = alicePrivateKey.toPublicKey();
       const tokenId = TokenId.from(0);
       const appChain = await setupAppChain();
+      appChain.setSigner(alicePrivateKey);
+
 
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
       const balances = appChain.runtime.resolve("Balances");
       const store = new NoteStore(alicePrivateKey);
 
-      appChain.setSigner(alicePrivateKey);
-      let tx = await appChain.transaction(alice, async () => {
-        await balances.addBalance(tokenId, alice, Balance.from(100_000n));
-      });
-      await tx.sign();
-      await tx.send();
-      await appChain.produceBlock();
-
       // Final root after adding all commitments
       const initialRoot = store.getMerkleTree().getRoot();
-
-      let balance = await appChain.query.runtime.Balances.balances.get(
-        BalancesKey.from(tokenId, alice),
-      );
-
-      if (!balance) {
-        throw new Error("No balance found for alice!!!");
-      }
-
-      console.dir({ balance }, { depth: null });
 
       // Set the Merkle root in the runtime module
       const tx0 = await appChain.transaction(alice, async () => {
@@ -160,6 +144,23 @@ describe("ShieldedPool Transactions", () => {
       await tx0.sign();
       await tx0.send();
       await appChain.produceBlock();
+
+
+      let tx = await appChain.transaction(alice, async () => {
+        await balances.addBalance(tokenId, alice, Balance.from(100_000n));
+      });
+      await tx.sign();
+      await tx.send();
+      await appChain.produceBlock();
+
+
+      let balance = await appChain.query.runtime.Balances.balances.get(
+        BalancesKey.from(tokenId, alice),
+      );
+
+      if (!balance) {
+        throw new Error("No balance found for alice!!!");
+      }
 
       const transactionInput = deposit(store, 1500n);
 

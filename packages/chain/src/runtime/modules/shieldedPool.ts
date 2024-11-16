@@ -71,12 +71,6 @@ export class ShieldedPool extends RuntimeModule<Record<string, never>> {
     );
 
     let inbound = Provable.if(isNegative(publicAmount), Field(0), publicAmount);
-    Provable.asProver(() => {
-      console.dir(
-        { inbound, balanceFromBlurg, outbound, hasAmount },
-        { depth: null },
-      );
-    });
 
     await this.balances.transfer(
       tokenId,
