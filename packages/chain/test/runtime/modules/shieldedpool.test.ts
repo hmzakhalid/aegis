@@ -1,15 +1,16 @@
+import "reflect-metadata";
 import { TestingAppChain } from "@proto-kit/sdk";
 import { ShieldedPool } from "../../../src/runtime/modules/shieldedPool";
 import { IndexedMerkleTree } from "../../../src/runtime/modules/utils";
 import { JoinSplitTransactionZkProgram } from "../../../src/runtime/modules/jointTxZkProgram";
 import { Note, NoteStore } from "../../../src/runtime/modules/types";
 import { PrivateKey, PublicKey, Field, MerkleWitness, Poseidon } from "o1js";
-import { UInt64 } from "@proto-kit/library";
+import { TokenId, UInt64 } from "@proto-kit/library";
 
 const TIMEOUT = 1_000_000;
 
 const treeHeight = 8;
-class MyMerkleWitness extends MerkleWitness(treeHeight) { }
+class MyMerkleWitness extends MerkleWitness(treeHeight) {}
 
 function createTxInput(
   privateKey: PrivateKey,
@@ -104,7 +105,17 @@ async function setupAppChain() {
       ShieldedPool: {},
     },
   });
-  return appChain;
+
+  await appChain.start();
+
+  return {
+    appChain,
+    async runTx(sender: PublicKey, callback: () => Promise<void>) {
+      const tx = await appChain.transaction(sender, callback);
+      await tx.sign();
+      await tx.send();
+    },
+  };
 }
 
 describe("ShieldedPool Transactions", () => {
@@ -113,10 +124,10 @@ describe("ShieldedPool Transactions", () => {
     async () => {
       const alicePrivateKey = PrivateKey.random();
       const alice = alicePrivateKey.toPublicKey();
+      const tokenId = TokenId.from(0);
 
-      const appChain = await setupAppChain();
+      const { appChain, runTx } = await setupAppChain();
 
-      await appChain.start();
       appChain.setSigner(alicePrivateKey);
 
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
@@ -129,11 +140,9 @@ describe("ShieldedPool Transactions", () => {
       const finalRoot = merkleTree.getRoot();
 
       // Set the Merkle root in the runtime module
-      const tx0 = await appChain.transaction(alice, async () => {
+      await runTx(alice, async () => {
         await shieldedPool.setRoot(finalRoot);
       });
-      await tx0.sign();
-      await tx0.send();
 
       // Verify the stored root matches the final root
       const storedRoot = await shieldedPool.root.get();
@@ -147,11 +156,10 @@ describe("ShieldedPool Transactions", () => {
         await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
 
       // Process the transaction
-      const tx1 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(proof);
+
+      await runTx(alice, async () => {
+        await shieldedPool.processTransaction(tokenId, proof);
       });
-      await tx1.sign();
-      await tx1.send();
 
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
@@ -159,15 +167,16 @@ describe("ShieldedPool Transactions", () => {
     },
     TIMEOUT,
   );
+
   it(
     "should withdraw",
     async () => {
       const alicePrivateKey = PrivateKey.random();
       const alice = alicePrivateKey.toPublicKey();
+      const tokenId = TokenId.from(0);
 
-      const appChain = await setupAppChain();
+      const { appChain, runTx } = await setupAppChain();
 
-      await appChain.start();
       appChain.setSigner(alicePrivateKey);
 
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
@@ -183,11 +192,9 @@ describe("ShieldedPool Transactions", () => {
       const finalRoot = merkleTree.getRoot();
 
       // Set the Merkle root in the runtime module
-      const tx0 = await appChain.transaction(alice, async () => {
+      await runTx(alice, async () => {
         await shieldedPool.setRoot(finalRoot);
       });
-      await tx0.sign();
-      await tx0.send();
 
       // Verify the stored root matches the final root
       const storedRoot = await shieldedPool.root.get();
@@ -201,11 +208,9 @@ describe("ShieldedPool Transactions", () => {
         await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
 
       // Process the transaction
-      const tx1 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(proof);
+      await runTx(alice, async () => {
+        await shieldedPool.processTransaction(tokenId, proof);
       });
-      await tx1.sign();
-      await tx1.send();
 
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
@@ -213,6 +218,7 @@ describe("ShieldedPool Transactions", () => {
     },
     TIMEOUT,
   );
+
   it(
     "should process valid transactions and reject duplicate nullifiers",
     async () => {
@@ -220,10 +226,9 @@ describe("ShieldedPool Transactions", () => {
       const alice = alicePrivateKey.toPublicKey();
       const bobPrivateKey = PrivateKey.random();
       const bob = bobPrivateKey.toPublicKey();
+      const tokenId = TokenId.from(0);
+      const { appChain, runTx } = await setupAppChain();
 
-      const appChain = await setupAppChain();
-
-      await appChain.start();
       appChain.setSigner(alicePrivateKey);
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
 
@@ -240,11 +245,9 @@ describe("ShieldedPool Transactions", () => {
       const finalRoot = merkleTree.getRoot();
 
       // Set the Merkle root in the runtime module
-      const tx0 = await appChain.transaction(alice, async () => {
+      await runTx(alice, async () => {
         await shieldedPool.setRoot(finalRoot);
       });
-      await tx0.sign();
-      await tx0.send();
 
       // Verify the stored root matches the final root
       const storedRoot = await shieldedPool.root.get();
@@ -259,7 +262,7 @@ describe("ShieldedPool Transactions", () => {
 
       // Process the transaction
       const tx1 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(proof);
+        await shieldedPool.processTransaction(tokenId, proof);
       });
       await tx1.sign();
       await tx1.send();
@@ -269,11 +272,9 @@ describe("ShieldedPool Transactions", () => {
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
 
       // Attempt to reuse the same nullifiers (should fail)
-      const tx2 = await appChain.transaction(alice, async () => {
-        await shieldedPool.processTransaction(proof);
+      await runTx(alice, async () => {
+        await shieldedPool.processTransaction(tokenId, proof);
       });
-      await tx2.sign();
-      await tx2.send();
 
       // Verify the transaction failed due to duplicate nullifiers
       const block2 = await appChain.produceBlock();

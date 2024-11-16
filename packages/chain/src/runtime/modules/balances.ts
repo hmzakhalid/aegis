@@ -10,7 +10,6 @@ interface BalancesConfig {
 @runtimeModule()
 export class Balances extends BaseBalances<BalancesConfig> {
   @state() public circulatingSupply = State.from<Balance>(Balance);
-
   @runtimeMethod()
   public async addBalance(
     tokenId: TokenId,

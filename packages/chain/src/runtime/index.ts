@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import { Balance, VanillaRuntimeModules } from "@proto-kit/library";
 import { ModulesConfig } from "@proto-kit/common";
 
