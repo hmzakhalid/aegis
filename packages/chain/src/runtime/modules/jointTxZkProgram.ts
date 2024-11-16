@@ -9,33 +9,35 @@ import {
 
 // Merkle tree configuration
 const treeHeight = 8;
-class MyMerkleWitness extends MerkleWitness(treeHeight) {}
+class MyMerkleWitness extends MerkleWitness(treeHeight) { }
 
 // Struct for transaction public output
 export class TransactionPublicOutput extends Struct({
-  nullifiers: [Field, Field], // Nullifiers for inputs (fixed length: 2)
-  commitments: [Field, Field], // Commitments for outputs (fixed length: 2)
+  nullifiers: [Field, Field],
+  commitments: [Field, Field],
   publicAmount: Field,
-  root: Field,
-}) {}
+  newRoot: Field,
+  oldRoot: Field,
+}) { }
 
 // Struct for transaction private inputs
 export class TransactionPrivateInput extends Struct({
-  privateKeys: [PrivateKey, PrivateKey], // Array of private keys for inputs (fixed length: 2)
-  inputAmounts: [Field, Field], // Input amounts (fixed length: 2)
-  blindings: [Field, Field], // Input blindings (fixed length: 2)
-  merkleWitnesses: [MyMerkleWitness, MyMerkleWitness], // Merkle witnesses for inputs (fixed length: 2)
-  outputAmounts: [Field, Field], // Output amounts (fixed length: 2)
-  outputPublicKeys: [Field, Field], // Output public keys (fixed length: 2)
-  outputBlindings: [Field, Field], // Output blindings (fixed length: 2)
-  publicAmount: Field, // Public amount
-}) {}
+  privateKeys: [PrivateKey, PrivateKey],
+  inputAmounts: [Field, Field],
+  blindings: [Field, Field],
+  oldRoot: Field,
+  merkleWitnesses: [MyMerkleWitness, MyMerkleWitness],
+  outputAmounts: [Field, Field],
+  outputPublicKeys: [Field, Field],
+  outputBlindings: [Field, Field],
+  publicAmount: Field,
+}) { }
 
 // Define the JoinSplitTransaction ZkProgram
 export const JoinSplitTransactionZkProgram = ZkProgram({
   name: "JoinSplitTransaction",
 
-  publicOutput: TransactionPublicOutput, // Output includes nullifiers, commitments, and Merkle root
+  publicOutput: TransactionPublicOutput,
 
   methods: {
     proveTransaction: {
@@ -47,7 +49,7 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
         const commitments: Field[] = [];
         let inputSum = Field(0);
         let outputSum = Field(0);
-
+        let newRoot = transactionInput.oldRoot;
         // Process inputs to compute nullifiers
         for (let i = 0; i < transactionInput.privateKeys.length; i++) {
           const privateKey = transactionInput.privateKeys[i];
@@ -55,16 +57,15 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
           const blinding = transactionInput.blindings[i];
           const merkleWitness = transactionInput.merkleWitnesses[i];
 
-          // Derive public key from the private key
           const publicKey = privateKey.toPublicKey().toFields()[0];
-
-          // Compute commitment: hash(amount, blinding, publicKey)
           const commitment = Poseidon.hash([amount, blinding, publicKey]);
-
-          // Get Index
           const witnessIndex = merkleWitness.calculateIndex();
+          const oldWitnessRoot = merkleWitness.calculateRoot(Field(0));
+          newRoot.assertEquals(oldWitnessRoot, "Old root does not match the merkle Witness")
+          const currentWitnessRoot = merkleWitness.calculateRoot(commitment);
+          newRoot = currentWitnessRoot;
 
-          // Compute nullifier: hash(commitment, index, privateKey)
+
           const nullifier = Poseidon.hash([
             commitment,
             witnessIndex, // Use index as part of the nullifier
@@ -82,11 +83,9 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
           const publicKey = transactionInput.outputPublicKeys[i];
           const blinding = transactionInput.outputBlindings[i];
 
-          // Compute commitment: hash(amount, publicKey, blinding)
           const commitment = Poseidon.hash([amount, publicKey, blinding]);
           commitments.push(commitment);
 
-          // Accumulate output amounts
           outputSum = outputSum.add(amount);
         }
 
@@ -98,7 +97,8 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
           nullifiers: [nullifiers[0], nullifiers[1]],
           commitments: [commitments[0], commitments[1]],
           publicAmount: transactionInput.publicAmount,
-          root: transactionInput.merkleWitnesses[0].calculateRoot(commitments[0]),
+          oldRoot: transactionInput.oldRoot,
+          newRoot,
         });
       },
     },
@@ -106,4 +106,4 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
 });
 
 // Generate the proof class for the ZkProgram
-export class JoinSplitTransactionProof extends ZkProgram.Proof(JoinSplitTransactionZkProgram) {}
+export class JoinSplitTransactionProof extends ZkProgram.Proof(JoinSplitTransactionZkProgram) { }

@@ -24,7 +24,6 @@ export class Note {
     amount: bigint,
     blinding: bigint = randomInt(),
   ) {
-    console.log({ pubkey, amount, blinding });
     return new Note(
       pubkeyToField(pubkey),
       Field(Number(amount)),
