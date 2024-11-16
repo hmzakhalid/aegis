@@ -60,7 +60,7 @@
     "@proto-kit/sdk": "*",
     "@proto-kit/sequencer": "*",
     "@proto-kit/indexer": "*",
-    "o1js": "1.6.0",
+    "o1js": "1.9.1",
     "tsyringe": "^4.7.0"
   }
 }
