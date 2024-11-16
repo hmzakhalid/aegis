@@ -11,7 +11,6 @@ import {
   Field,
   MerkleWitness,
   Poseidon,
-  Struct,
 } from "o1js";
 import { Balance, BalancesKey, TokenId, UInt64 } from "@proto-kit/library";
 
@@ -251,40 +250,37 @@ describe("ShieldedPool Transactions", () => {
   it(
     "should process valid transactions and reject duplicate nullifiers",
     async () => {
-      const alicePrivateKey = PrivateKey.random();
-      const alice = alicePrivateKey.toPublicKey();
-      const bobPrivateKey = PrivateKey.random();
-      const bob = bobPrivateKey.toPublicKey();
+      const alice = Wallet.random();
+      const bob = Wallet.random();
 
       const tokenId = TokenId.from(0);
       const appChain = await setupAppChain();
 
       await appChain.start();
-      appChain.setSigner(alicePrivateKey);
+      appChain.setSigner(alice.getPrivateKey());
       const shieldedPool = appChain.runtime.resolve("ShieldedPool");
-      const wallet = new Wallet(alicePrivateKey);
 
       // Final root after adding all commitments
-      const initialRoot = wallet.getMerkleTree().getRoot();
+      const initialRoot = alice.getMerkleTree().getRoot();
       // Set the Merkle root in the runtime module
-      const tx0 = await appChain.transaction(alice, async () => {
+      const tx0 = await appChain.transaction(alice.getPublicKey(), async () => {
         await shieldedPool.setRoot(initialRoot);
       });
       await tx0.sign();
       await tx0.send();
       await appChain.produceBlock();
 
-      wallet.addNote(0n, Note.new(alice, 1000n));
-      wallet.addNote(0n, Note.new(alice, 2000n));
+      alice.addNote(0n, Note.new(alice.getPublicKey(), 1000n));
+      alice.addNote(0n, Note.new(alice.getPublicKey(), 2000n));
 
-      const transactionInput = transfer(wallet, bob, 1500n);
+      const transactionInput = transfer(alice, bob.getPublicKey(), 1500n);
 
       // Generate a valid proof
       const proof =
         await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
 
       // Process the transaction
-      const tx1 = await appChain.transaction(alice, async () => {
+      const tx1 = await appChain.transaction(alice.getPublicKey(), async () => {
         await shieldedPool.processTransaction(tokenId, proof);
       });
       await tx1.sign();
@@ -295,13 +291,13 @@ describe("ShieldedPool Transactions", () => {
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
 
       if (block1) {
-        wallet.consumeBlock(block1, "nullify");
+        alice.consumeBlock(block1, "nullify");
       } else {
         throw new Error("Block is undefined");
       }
 
       // Attempt to reuse the same nullifiers (should fail)
-      const tx2 = await appChain.transaction(alice, async () => {
+      const tx2 = await appChain.transaction(alice.getPublicKey(), async () => {
         await shieldedPool.processTransaction(tokenId, proof);
       });
       await tx2.sign();

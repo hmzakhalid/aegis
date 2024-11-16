@@ -67,6 +67,10 @@ export class Wallet {
     private merkleTree: IndexedMerkleTree = new IndexedMerkleTree(8),
   ) { }
 
+  static random() {
+    return new Wallet(PrivateKey.random());
+  }
+
   getUnspentNotes() {
     return this.notes.filter((note) => {
       return !this.nullifiers
