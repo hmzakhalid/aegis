@@ -94,15 +94,12 @@ export class Wallet {
 
   consumeBlock(block: Block, eventName: string) {
     const events = block?.transactions?.flatMap((tx) => tx.events) || [];
-    console.log({ events });
     const matchingEvents = events.filter(
       (event) => event.eventName === eventName,
     );
     for (const event of matchingEvents) {
       const nullifierField = event.data[0];
       if (nullifierField instanceof Field) {
-        console.log("adding nullifier");
-        console.dir(nullifierField, { depth: null });
         this.nullifiers.push(nullifierField);
       } else {
         console.warn("Unexpected nullifier format:", event.data);
@@ -120,7 +117,6 @@ export class Wallet {
 
   getBalance() {
     let unspent = this.getUnspentNotes();
-    console.dir({ unspent }, { depth: null });
     let total = unspent.reduce((acc, note) => {
       acc += note.amount.toBigInt();
       return acc;

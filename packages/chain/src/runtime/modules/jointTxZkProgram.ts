@@ -60,10 +60,9 @@ export const JoinSplitTransactionZkProgram = ZkProgram({
           const commitment = Poseidon.hash([amount, blinding, publicKey]);
           const witnessIndex = merkleWitness.calculateIndex();
 
-
           const nullifier = Poseidon.hash([
             commitment,
-            witnessIndex, // Use index as part of the nullifier
+            witnessIndex,
             privateKey.toFields()[0],
           ]);
           nullifiers.push(nullifier);

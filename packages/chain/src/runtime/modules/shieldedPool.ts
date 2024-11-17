@@ -22,12 +22,13 @@ let ranpubkey = PrivateKey.random().toPublicKey();
 
 export class NullifierEvent extends Struct({
   nullifier: Field,
-}){}
+}) { }
 
 @runtimeModule()
 export class ShieldedPool extends RuntimeModule<Record<string, never>> {
   @state() public root = State.from<Field>(Field);
   @state() public nullifiers = StateMap.from<Field, Bool>(Field, Bool);
+  @state() public tokenPool = StateMap.from<TokenId, PublicKey>(TokenId, PublicKey);
 
   public constructor(@inject("Balances") private balances: Balances) {
     super();
@@ -36,6 +37,10 @@ export class ShieldedPool extends RuntimeModule<Record<string, never>> {
   @runtimeMethod()
   public async setRoot(root: Field) {
     await this.root.set(root);
+  }
+  @runtimeMethod()
+  public async setTokenPool(tokenId: TokenId, pool: PublicKey) {
+    await this.tokenPool.set(tokenId, pool);
   }
 
   public events = new RuntimeEvents({
@@ -62,10 +67,7 @@ export class ShieldedPool extends RuntimeModule<Record<string, never>> {
       "Proof Root does not match the new Root",
     );
 
-    let balanceFromBlurg = await this.balances.getBalance(
-      tokenId,
-      this.transaction.sender.value,
-    );
+    const pool = await this.tokenPool.get(tokenId);
 
     let hasAmount = Provable.if(
       publicAmount.equals(Field(0)).not(),
@@ -80,19 +82,21 @@ export class ShieldedPool extends RuntimeModule<Record<string, never>> {
     );
 
     let inbound = Provable.if(isNegative(publicAmount), Field(0), publicAmount);
+    const inboundAmount = UInt64.Unsafe.fromField(inbound.mul(hasAmount));
+    const outboundAmount = UInt64.Unsafe.fromField(outbound.mul(hasAmount));
 
     await this.balances.transfer(
       tokenId,
-      PublicKey.empty(),
+      pool.value,
       this.transaction.sender.value,
-      UInt64.Unsafe.fromField(hasAmount.mul(outbound)),
+      outboundAmount,
     );
 
     await this.balances.transfer(
       tokenId,
       this.transaction.sender.value,
       ranpubkey,
-      UInt64.Unsafe.fromField(hasAmount.mul(inbound)),
+      inboundAmount,
     );
 
     for (const nullifier of nullifiers) {

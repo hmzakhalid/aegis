@@ -11,7 +11,7 @@ import { Balance, BalancesKey, TokenId, UInt64 } from "@proto-kit/library";
 const TIMEOUT = 1_000_000;
 
 const treeHeight = 8;
-class MyMerkleWitness extends MerkleWitness(treeHeight) {}
+class MyMerkleWitness extends MerkleWitness(treeHeight) { }
 
 function createTxInput(
   privateKey: PrivateKey,
@@ -64,27 +64,47 @@ function deposit(wallet: Wallet, amount: bigint) {
 }
 
 function withdraw(wallet: Wallet, amount: bigint) {
+  // Retrieve notes up to the required amount
   const [inputs, total] = wallet.getNotesUpTo(amount);
-  let publicKey = wallet.getPublicKey();
 
   if (inputs.length === 0) {
     throw new Error("Not enough balance!");
   }
 
-  let change = total - amount;
-  change = change > 0n ? change : 0n;
-  const outputs = [Note.new(publicKey, 0n), Note.new(publicKey, change)];
+  // Add a zero-amount note if there's only one input
+  if (inputs.length === 1) {
+    inputs.push(Note.new(wallet.getPublicKey(), 0n));
+  }
 
-  let privateKey = wallet.getPrivateKey();
-  let publicAmount = Field(-1n * amount);
-  let merkleTree = wallet.getMerkleTree();
+  const publicKey = wallet.getPublicKey();
+
+  // Calculate the remaining change
+  const change = total > amount ? total - amount : 0n;
+
+  // Define output notes
+  const outputs = [
+    Note.new(publicKey, 0n), // Burned output
+    Note.new(publicKey, change), // Remaining change
+  ];
+
+  // Retrieve private key and merkle tree
+  const privateKey = wallet.getPrivateKey();
+  const merkleTree = wallet.getMerkleTree();
+
+  // Negative `publicAmount` indicates withdrawal
+  const publicAmount = Field(-1n * amount);
+
   return createTxInput(privateKey, merkleTree, inputs, outputs, publicAmount);
 }
+
 
 function transfer(wallet: Wallet, to: PublicKey, amount: bigint) {
   const [inputs, total] = wallet.getNotesUpTo(amount);
   if (inputs.length === 0) {
     throw new Error("Not enough balance!");
+  }
+  if (inputs.length === 1) {
+    inputs.push(Note.new(wallet.getPublicKey(), 0n))
   }
   let change = total - amount;
   change = change > 0n ? change : 0n;
@@ -106,7 +126,7 @@ async function setupAppChain() {
   const appChain = TestingAppChain.fromRuntime({ ShieldedPool, Balances });
   appChain.configurePartial({
     Runtime: {
-      Balances: { totalSupply: UInt64.from(10000000) },
+      Balances: { totalSupply: UInt64.from(1_000_000_000) },
       ShieldedPool: {},
     },
   });
@@ -116,140 +136,134 @@ async function setupAppChain() {
 }
 
 async function depositTest() {
-  const alicePrivateKey = PrivateKey.random();
-  const alice = alicePrivateKey.toPublicKey();
+  const alice = Wallet.random();
+  const pool = Wallet.random();
   const tokenId = TokenId.from(0);
   const appChain = await setupAppChain();
-  appChain.setSigner(alicePrivateKey);
+  appChain.setSigner(alice.getPrivateKey());
 
   const shieldedPool = appChain.runtime.resolve("ShieldedPool");
   const balances = appChain.runtime.resolve("Balances");
-  const wallet = new Wallet(alicePrivateKey);
 
   // Final root after adding all commitments
-  const initialRoot = wallet.getMerkleTree().getRoot();
+  const initialRoot = alice.getMerkleTree().getRoot();
 
   // Set the Merkle root in the runtime module
-  const tx0 = await appChain.transaction(alice, async () => {
+  let tx = await appChain.transaction(alice.getPublicKey(), async () => {
     await shieldedPool.setRoot(initialRoot);
-  });
-  await tx0.sign();
-  await tx0.send();
-  await appChain.produceBlock();
-
-  let tx = await appChain.transaction(alice, async () => {
-    await balances.addBalance(tokenId, alice, Balance.from(100_000n));
   });
   await tx.sign();
   await tx.send();
   await appChain.produceBlock();
 
-  let balance = await appChain.query.runtime.Balances.balances.get(
-    BalancesKey.from(tokenId, alice),
-  );
+  tx = await appChain.transaction(alice.getPublicKey(), async () => {
+    await shieldedPool.setTokenPool(tokenId, pool.getPublicKey());
+  });
+  await tx.sign();
+  await tx.send();
+  await appChain.produceBlock();
 
-  if (!balance) {
-    throw new Error("No balance found for alice!!!");
-  }
+  tx = await appChain.transaction(alice.getPublicKey(), async () => {
+    await balances.addBalance(tokenId, alice.getPublicKey(), Balance.from(100_000n));
+  });
+  await tx.sign();
+  await tx.send();
+  await appChain.produceBlock();
+
+  tx = await appChain.transaction(alice.getPublicKey(), async () => {
+    await balances.addBalance(tokenId, pool.getPublicKey(), Balance.from(100_000n));
+  });
+  await tx.sign();
+  await tx.send();
+  await appChain.produceBlock();
 
   const { outputs, inputs, merkleIndexes, ...transactionInput } = deposit(
-    wallet,
+    alice,
     1500n,
   );
 
-  wallet.addNotesFromOutputs(outputs, merkleIndexes);
+  alice.addNotesFromOutputs(outputs, merkleIndexes);
 
   // Generate a valid proof
   const proof =
     await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
 
   // Process the transaction
-  const tx1 = await appChain.transaction(alice, async () => {
+  tx = await appChain.transaction(alice.getPublicKey(), async () => {
     await shieldedPool.processTransaction(tokenId, proof);
   });
-  await tx1.sign();
-  await tx1.send();
+  await tx.sign();
+  await tx.send();
 
   // Verify the transaction was successful
   const block1 = await appChain.produceBlock();
   expect(block1?.transactions[0].status.toBoolean()).toBe(true);
   // Consume the block and add nullifier to the wallet
   if (block1) {
-    wallet.consumeBlock(block1, "nullify");
+    alice.consumeBlock(block1, "nullify");
   } else {
     throw new Error("Block is undefined");
   }
 
-  let total = wallet.getBalance();
+  let total = alice.getBalance();
   expect(Number(total)).toBe(1500);
 
   return {
     appChain,
-    wallet
+    alice,
+    shieldedPool,
+    pool
   }
 };
 
 describe("ShieldedPool Transactions", () => {
-  it.only(
-    "should deposit",
-    async () => {
-      await depositTest();
-    },
-    TIMEOUT,
-  );
   it(
     "should withdraw",
     async () => {
-      const alicePrivateKey = PrivateKey.random();
-      const alice = alicePrivateKey.toPublicKey();
-
+      // Start with a deposit of 1500
+      const { appChain, alice, shieldedPool, pool } = await depositTest();
       const tokenId = TokenId.from(0);
-      const appChain = await setupAppChain();
+      appChain.setSigner(alice.getPrivateKey());
 
-      await appChain.start();
-      appChain.setSigner(alicePrivateKey);
+      // Verify wallet's initial state after deposit
+      const initialBalance = alice.getBalance();
+      expect(Number(initialBalance)).toBe(1500); // Confirm deposit from `depositTest`
+      alice.getBalance = () => 0n;
 
-      const shieldedPool = appChain.runtime.resolve("ShieldedPool");
+      // Prepare withdrawal transaction input
+      const { outputs, inputs, merkleIndexes, ...transactionInput } = withdraw(alice, 1500n);
 
-      const wallet = new Wallet(alicePrivateKey);
+      alice.addNotesFromOutputs(outputs, merkleIndexes);
 
-      // Final root after adding all commitments
-      const initialRoot = wallet.getMerkleTree().getRoot();
-      // Set the Merkle root in the runtime module
-      const tx0 = await appChain.transaction(alice, async () => {
-        await shieldedPool.setRoot(initialRoot);
-      });
-      await tx0.sign();
-      await tx0.send();
-      await appChain.produceBlock();
-
-      wallet.addNote(0n, Note.new(alice, 1000n));
-      wallet.addNote(0n, Note.new(alice, 2000n));
-
-      const transactionInput = withdraw(wallet, 1500n);
-      // Generate a valid proof
+      // Generate proof for withdrawal
       const proof =
         await JoinSplitTransactionZkProgram.proveTransaction(transactionInput);
 
-      // Process the transaction
-      const tx1 = await appChain.transaction(alice, async () => {
+      // Process the withdrawal transaction
+      let tx = await appChain.transaction(alice.getPublicKey(), async () => {
         await shieldedPool.processTransaction(tokenId, proof);
       });
-      await tx1.sign();
-      await tx1.send();
+      await tx.sign();
+      await tx.send();
 
       // Verify the transaction was successful
       const block1 = await appChain.produceBlock();
       expect(block1?.transactions[0].status.toBoolean()).toBe(true);
-      // Consume the block and add nullifier to the wallet
+
+      // Consume the block to update nullifiers in the wallet
       if (block1) {
-        wallet.consumeBlock(block1, "nullify");
+        alice.consumeBlock(block1, "nullify");
       } else {
         throw new Error("Block is undefined");
       }
+
+      // Verify wallet's state after withdrawal
+      expect(alice.getBalance()).toBe(0n); // 1500 - 1500 withdrawn
     },
     TIMEOUT,
   );
+
+
   it(
     "should process valid transactions and reject duplicate nullifiers",
     async () => {
